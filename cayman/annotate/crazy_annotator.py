@@ -89,14 +89,28 @@ class CazyAnnotator:
 
     def annotate_sequences_with_all_hmms(self, threads = 1):
         import pandas as pd
-        if threads == 1 or threads == None:
-            # res = [self.annotate_sequences_with_hmm(i) for i in tqdm(range(len(self.hmms.hmm_objects)))]
-            res = [self.annotate_sequences_with_hmm(i) for i in range(len(self.hmms.hmm_objects))]
-        else:
-            from multiprocessing import Pool
-            import timeit
-            p = Pool(threads)
-            res = p.map(self.annotate_sequences_with_hmm, range(len(self.hmms.hmm_objects)))
+        from pyhmmer import hmmsearch
+
+        # Search all HMMs against all sequences using pyhmmer
+        # (single process, shared data) rather than one forked worker per HMM.
+        # Results may be yielded out of order, so map each TopHits back to its
+        # HMM's position via the (unique) HMM name.
+        cols = ["moduleID", "start", "end", "pvalue", "i_evalue", "c_evalue"]
+        name_to_index = {hmm.name: i for i, hmm in enumerate(self.hmms.hmm_objects)}
+        res = [pd.DataFrame(columns=cols) for _ in self.hmms.hmm_objects]
+
+        for top_hits in hmmsearch(
+            self.hmms.hmm_objects, self.sequences.sequences, cpus=threads or 0,
+        ):
+            rows = [
+                [hit.name, domain.env_from, domain.env_to, domain.pvalue, domain.i_evalue, domain.c_evalue]
+                for hit in top_hits for domain in hit.domains
+            ]
+            if rows:
+                res[name_to_index[top_hits.query.name]] = (
+                    pd.DataFrame(rows, columns=cols).drop_duplicates()
+                )
+
         self.annotations_by_family_and_fold = res
 
     def curate_annotations(self, precomputed_hmm_cutoffs):
