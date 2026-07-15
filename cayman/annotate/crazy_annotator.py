@@ -1,8 +1,14 @@
 import os
 
+from collections import defaultdict
+from re import sub
+from statistics import geometric_mean
 from typing import List
 
+import numpy as np
+import pandas as pd
 import pyhmmer
+
 # from tqdm import tqdm
 
 
@@ -88,9 +94,6 @@ class CazyAnnotator:
         self.sequences.read_sequences_from_file(path_to_sequences)
 
     def annotate_sequences_with_all_hmms(self, threads = 1):
-        import pandas as pd
-        from pyhmmer import hmmsearch
-
         # Search all HMMs against all sequences using pyhmmer
         # (single process, shared data) rather than one forked worker per HMM.
         # Results may be yielded out of order, so map each TopHits back to its
@@ -99,7 +102,7 @@ class CazyAnnotator:
         name_to_index = {hmm.name: i for i, hmm in enumerate(self.hmms.hmm_objects)}
         res = [pd.DataFrame(columns=cols) for _ in self.hmms.hmm_objects]
 
-        for top_hits in hmmsearch(
+        for top_hits in pyhmmer.hmmsearch(
             self.hmms.hmm_objects, self.sequences.sequences, cpus=threads or 0,
         ):
             rows = [
@@ -114,9 +117,7 @@ class CazyAnnotator:
         self.annotations_by_family_and_fold = res
 
     def curate_annotations(self, precomputed_hmm_cutoffs):
-        # TODO: Clean this code up..
-        from re import sub
-        import pandas as pd
+        # TODO: Clean this code up..        
         median_cutoffs = pd.read_csv(precomputed_hmm_cutoffs)
         median_cutoffs['familyType'] = [sub("\d", "", x.replace("_", "")) for x in median_cutoffs['family']]
         median_cutoffs = median_cutoffs.groupby('familyType').median(numeric_only=True)['cutoff']
@@ -204,8 +205,6 @@ class CazyAnnotator:
 
     @staticmethod
     def resolve_overlapping_annotations(df):
-        from collections import defaultdict
-        import pandas as pd        
         if df.shape[0] == 1:
             return(df)
 
@@ -288,32 +287,27 @@ class CazyAnnotator:
                         'family' : families})
         return(out)
     
-    def annotate_sequences_with_hmm(self, hmm_index):
-        import pandas as pd
-        pipeline = pyhmmer.plan7.Pipeline(alphabet, background=self.background)
-        hmm =self.hmms.hmm_objects[hmm_index]
-        hits = pipeline.search_hmm(hmm, self.sequences.sequences)
-        res = []
-        for hit in hits:
-            name = hit.name
-            for domain in hit.domains:
-                res.append([name, domain.env_from, domain.env_to, domain.pvalue, domain.i_evalue, domain.c_evalue])
-        if len(res)==0:
-            hitDF = pd.DataFrame(columns=["moduleID", "start", "end", "pvalue", "i_evalue", "c_evalue"])
-            return(hitDF)
-        hitDF = pd.DataFrame(res)
-        hitDF.columns = ["moduleID", "start", "end", "pvalue", "i_evalue", "c_evalue"]
-        hitDF = hitDF.drop_duplicates()        
-        return(hitDF)
+    # made obsolete in #25
+    # def annotate_sequences_with_hmm(self, hmm_index):
+    #     import pandas as pd
+    #     pipeline = pyhmmer.plan7.Pipeline(alphabet, background=self.background)
+    #     hmm =self.hmms.hmm_objects[hmm_index]
+    #     hits = pipeline.search_hmm(hmm, self.sequences.sequences)
+    #     res = []
+    #     for hit in hits:
+    #         name = hit.name
+    #         for domain in hit.domains:
+    #             res.append([name, domain.env_from, domain.env_to, domain.pvalue, domain.i_evalue, domain.c_evalue])
+    #     if len(res)==0:
+    #         hitDF = pd.DataFrame(columns=["moduleID", "start", "end", "pvalue", "i_evalue", "c_evalue"])
+    #         return(hitDF)
+    #     hitDF = pd.DataFrame(res)
+    #     hitDF.columns = ["moduleID", "start", "end", "pvalue", "i_evalue", "c_evalue"]
+    #     hitDF = hitDF.drop_duplicates()        
+    #     return(hitDF)
 
     @staticmethod
     def merge_annots(df):
-        from collections import defaultdict
-        #from scipy.stats.mstats import gmean as gmean_old # This import triggers the subnormals warning - let's not get into the details 
-        from statistics import geometric_mean
-        import numpy as np
-        import pandas as pd
-    
         # Emulate scipy.stats.mstats.gmean
         def gmean(iterable):
             if all(x == 0 for x in iterable):
